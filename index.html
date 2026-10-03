@@ -167,7 +167,7 @@
     transform: translateY(-3px);
     border-color: rgba(255,255,255,0.34);
   }
-  .tile .icon-box img{ width:28px; height:28px; border-radius:6px; }
+  .tile .icon-box img{ width:28px; height:28px; border-radius:6px; object-fit:contain; }
   .tile .fallback-letter{
     font-family:'Space Grotesk', sans-serif;
     font-size:20px; font-weight:500; color: var(--text);
@@ -487,7 +487,7 @@
     display:flex; align-items:center; justify-content:center;
     overflow:hidden; flex-shrink:0;
   }
-  .icon-preview img{ width:26px; height:26px; border-radius:6px; }
+  .icon-preview img{ width:26px; height:26px; border-radius:6px; object-fit:contain; }
   .icon-preview svg{ opacity:0.5; }
   .icon-upload-buttons{
     display:flex; flex-direction:column; gap:6px; flex:1;
@@ -518,6 +518,45 @@
   .btn-primary{ background: var(--accent); color:#1a1305; }
   .btn-secondary{ background: rgba(255,255,255,0.08); color: var(--text); }
   .btn:hover{ opacity:0.9; }
+
+  /* ---------- Online icon picker ---------- */
+  #picker-overlay{ z-index:12; }
+  .modal.picker{
+    width:min(480px, 92vw); max-height:86vh;
+    display:flex; flex-direction:column;
+  }
+  .picker-tabs{ margin-bottom:14px; }
+  .picker-tabs button{ flex:1; }
+  .picker-row{ display:flex; gap:8px; margin-bottom:12px; }
+  .picker-row input{
+    flex:1; min-width:0; padding:10px 12px; border-radius:10px;
+    background: rgba(255,255,255,0.06);
+    border:1px solid var(--glass-border);
+    color: var(--text); font-size:14px; outline:none;
+    font-family:'Inter', sans-serif;
+  }
+  .picker-row input:focus{ border-color: var(--accent); }
+  .picker-row .btn{ flex:none; padding:0 18px; }
+  .picker-grid{
+    display:grid; grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+    gap:10px; overflow-y:auto; min-height:120px; max-height:300px;
+    padding:2px; align-content:start;
+  }
+  .picker-item{
+    aspect-ratio:1; border-radius:14px; padding:0; cursor:pointer;
+    background: var(--glass); border:1px solid var(--glass-border);
+    display:flex; align-items:center; justify-content:center;
+    transition: background 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+  }
+  .picker-item:hover{
+    background: var(--glass-strong); transform: translateY(-2px);
+    border-color: var(--accent);
+  }
+  .picker-item img{ width:30px; height:30px; border-radius:6px; object-fit:contain; }
+  .picker-msg{
+    grid-column:1 / -1; text-align:center; padding:24px 8px;
+    font-size:12.5px; color: var(--text-dim);
+  }
 
   #file-input, #bg-file-input{ display:none; }
 
@@ -727,6 +766,7 @@
         </div>
         <div class="icon-upload-buttons">
           <button type="button" class="upload-icon-btn" id="upload-icon-btn">Upload custom icon</button>
+          <button type="button" class="upload-icon-btn" id="browse-icons-btn">Choose from the internet</button>
           <button type="button" class="link-btn" id="use-default-icon-btn" style="display:none;">Use site's default icon instead</button>
         </div>
       </div>
@@ -734,6 +774,29 @@
     <div class="modal-actions">
       <button class="btn btn-secondary" id="cancel-btn">Cancel</button>
       <button class="btn btn-primary" id="save-btn">Add</button>
+    </div>
+  </div>
+</div>
+
+<div id="picker-overlay" class="modal-overlay-base">
+  <div class="modal picker">
+    <h3>Choose an icon</h3>
+    <div class="segmented picker-tabs" id="picker-tabs">
+      <button type="button" data-tab="site" class="active">Site icons</button>
+      <button type="button" data-tab="search">Search</button>
+      <button type="button" data-tab="url">Image URL</button>
+    </div>
+    <div class="picker-row" id="picker-search-row" style="display:none;">
+      <input id="picker-query" type="text" placeholder="Search icons (e.g. github, music)" autocomplete="off">
+      <button type="button" class="btn btn-primary" id="picker-search-btn">Search</button>
+    </div>
+    <div class="picker-row" id="picker-url-row" style="display:none;">
+      <input id="picker-url" type="text" placeholder="https://example.com/logo.png" autocomplete="off">
+      <button type="button" class="btn btn-primary" id="picker-url-btn">Use</button>
+    </div>
+    <div class="picker-grid" id="picker-grid"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" id="picker-close-btn">Close</button>
     </div>
   </div>
 </div>
@@ -781,7 +844,7 @@
 
   let shortcuts = [];
   let editingId = null;      // null = adding new, otherwise id of shortcut being edited
-  let customIconData = null; // base64 data URL of uploaded custom icon, or null
+  let customIconData = null; // base64 data URL or remote image URL of custom icon, or null
   let settings = {
     clockFormat: '24',
     showSearchBar: true,
@@ -1744,6 +1807,7 @@
       const img = document.createElement('img');
       img.src = sc.icon || faviconUrl(hostname);
       img.alt = '';
+      img.referrerPolicy = 'no-referrer';
       img.draggable = false;
       img.onerror = function(){
         iconBox.innerHTML = '';
@@ -1810,6 +1874,7 @@
     iconPreview.innerHTML = '';
     if(src){
       const img = document.createElement('img');
+      img.referrerPolicy = 'no-referrer';
       img.src = src;
       iconPreview.appendChild(img);
       useDefaultIconBtn.style.display = 'block';
@@ -1886,6 +1951,159 @@
     renderShortcuts();
     closeModal();
   }
+
+  // ---------- Online icon picker ----------
+  const pickerOverlay = document.getElementById('picker-overlay');
+  const pickerGrid = document.getElementById('picker-grid');
+  const pickerSearchRow = document.getElementById('picker-search-row');
+  const pickerUrlRow = document.getElementById('picker-url-row');
+  const pickerQuery = document.getElementById('picker-query');
+  const pickerUrl = document.getElementById('picker-url');
+  let pickerReq = 0; // guards against stale async results after switching tabs
+  let pickerTab = 'site';
+
+  function brandFromUrl(){
+    const raw = inputUrl.value.trim();
+    if(!raw) return '';
+    const parts = getHostname(normalizeUrl(raw)).split('.');
+    return (parts.length > 1 ? parts[parts.length - 2] : parts[0]).toLowerCase();
+  }
+
+  function showPickerMsg(text){
+    pickerGrid.innerHTML = '';
+    const m = document.createElement('div');
+    m.className = 'picker-msg';
+    m.textContent = text;
+    pickerGrid.appendChild(m);
+  }
+
+  function chooseIcon(src){
+    customIconData = src;
+    renderIconPreview(src);
+    pickerOverlay.classList.remove('open');
+  }
+
+  function addPickerItem(src, title){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'picker-item';
+    btn.title = title || '';
+    const img = document.createElement('img');
+    img.alt = '';
+    img.referrerPolicy = 'no-referrer';
+    img.draggable = false;
+    img.onerror = ()=> btn.remove();
+    img.onload = ()=>{ if(img.naturalWidth <= 1) btn.remove(); }; // drop 1x1 placeholders
+    img.src = src;
+    btn.appendChild(img);
+    btn.addEventListener('click', ()=> chooseIcon(src));
+    pickerGrid.appendChild(btn);
+  }
+
+  function loadSiteIcons(){
+    const raw = inputUrl.value.trim();
+    if(!raw){
+      showPickerMsg('Enter the website URL first to see its icons, or use Search.');
+      return;
+    }
+    const host = getHostname(normalizeUrl(raw));
+    const brand = brandFromUrl();
+    pickerGrid.innerHTML = '';
+    const candidates = [
+      ['https://www.google.com/s2/favicons?sz=128&domain=' + encodeURIComponent(host), 'Google'],
+      ['https://icons.duckduckgo.com/ip3/' + host + '.ico', 'DuckDuckGo'],
+      ['https://icon.horse/icon/' + host, 'icon.horse'],
+      ['https://' + host + '/apple-touch-icon.png', 'Site touch icon'],
+      ['https://' + host + '/favicon.ico', 'Site favicon'],
+      ['https://api.iconify.design/logos/' + encodeURIComponent(brand) + '.svg', 'Brand logo'],
+      ['https://api.iconify.design/simple-icons/' + encodeURIComponent(brand) + '.svg?color=%23f5f6f7', 'Brand mono']
+    ];
+    candidates.forEach(([src, title])=> addPickerItem(src, title));
+    setTimeout(()=>{
+      if(pickerTab === 'site' && !pickerGrid.children.length){
+        showPickerMsg('No icons found for this site. Try Search or Image URL.');
+      }
+    }, 4000);
+  }
+
+  function searchIcons(q){
+    const req = ++pickerReq;
+    showPickerMsg('Searching…');
+    fetchWithTimeout('https://api.iconify.design/search?query=' + encodeURIComponent(q) + '&limit=64', 8000)
+      .then(r=>{ if(!r.ok) throw new Error('search failed'); return r.json(); })
+      .then(data=>{
+        if(req !== pickerReq) return;
+        const icons = Array.isArray(data.icons) ? data.icons : [];
+        if(!icons.length){ showPickerMsg('No icons found for "' + q + '"'); return; }
+        pickerGrid.innerHTML = '';
+        icons.forEach(id=>{
+          const i = id.indexOf(':');
+          if(i < 1) return;
+          const prefix = id.slice(0, i), name = id.slice(i + 1);
+          addPickerItem('https://api.iconify.design/' + prefix + '/' + name + '.svg?color=%23f5f6f7', id);
+        });
+      })
+      .catch(()=>{
+        if(req === pickerReq) showPickerMsg('Could not reach the icon service.');
+      });
+  }
+
+  function useUrlIcon(){
+    let u = pickerUrl.value.trim();
+    if(!u) return;
+    if(!/^(https?:|data:image\/)/i.test(u)) u = 'https://' + u;
+    showPickerMsg('Checking image…');
+    const probe = new Image();
+    probe.referrerPolicy = 'no-referrer';
+    probe.onload = ()=> chooseIcon(u);
+    probe.onerror = ()=> showPickerMsg("Couldn't load an image from that link.");
+    probe.src = u;
+  }
+
+  function setPickerTab(tab){
+    pickerTab = tab;
+    pickerReq++;
+    document.querySelectorAll('#picker-tabs button').forEach(b=>{
+      b.classList.toggle('active', b.dataset.tab === tab);
+    });
+    pickerSearchRow.style.display = tab === 'search' ? 'flex' : 'none';
+    pickerUrlRow.style.display = tab === 'url' ? 'flex' : 'none';
+    if(tab === 'site'){
+      loadSiteIcons();
+    } else if(tab === 'search'){
+      if(!pickerQuery.value.trim()) pickerQuery.value = brandFromUrl();
+      const q = pickerQuery.value.trim();
+      if(q) searchIcons(q); else showPickerMsg('Type something to search icons.');
+      pickerQuery.focus();
+    } else {
+      showPickerMsg('Paste a direct link to an image (PNG, SVG, ICO, JPG, WebP).');
+      pickerUrl.focus();
+    }
+  }
+
+  document.getElementById('browse-icons-btn').addEventListener('click', ()=>{
+    pickerOverlay.classList.add('open');
+    setPickerTab(inputUrl.value.trim() ? 'site' : 'search');
+  });
+  document.querySelectorAll('#picker-tabs button').forEach(b=>{
+    b.addEventListener('click', ()=> setPickerTab(b.dataset.tab));
+  });
+  document.getElementById('picker-search-btn').addEventListener('click', ()=>{
+    const q = pickerQuery.value.trim();
+    if(q) searchIcons(q);
+  });
+  pickerQuery.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){ e.preventDefault(); const q = pickerQuery.value.trim(); if(q) searchIcons(q); }
+  });
+  document.getElementById('picker-url-btn').addEventListener('click', useUrlIcon);
+  pickerUrl.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){ e.preventDefault(); useUrlIcon(); }
+  });
+  document.getElementById('picker-close-btn').addEventListener('click', ()=> pickerOverlay.classList.remove('open'));
+  pickerOverlay.addEventListener('click', (e)=>{ if(e.target === pickerOverlay) pickerOverlay.classList.remove('open'); });
+  document.addEventListener('keydown', (e)=>{
+    if(e.key === 'Escape' && pickerOverlay.classList.contains('open')) pickerOverlay.classList.remove('open');
+  });
 
   // ---------- Search ----------
   document.getElementById('search-form').addEventListener('submit', (e)=>{
